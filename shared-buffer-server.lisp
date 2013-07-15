@@ -10,16 +10,41 @@
 
 (ql:quickload "usocket")
 
-(defparameter *client-groups* (make-hash-table)
+(defconstant +port+ 3705
+  "Shared-buffer uses port 3705.")
+
+(defparameter *client-groups* nil
   "Hash table containing lists of clients working on the same buffer.")
 
 (defun handler (stream)
-  "Function to handle new clients."
-  (print (read-line stream)))
+  "When a connection to a client is established this function is run. It
+  will read from the stream as long as the connection is open, and redirect
+  messages to all clients that has provided the same key."
+  (let ((key (read-line stream)))
+    (setf (gethash key *client-groups*)
+          (cons stream (gethash key *client-groups*)))
+    ;; Reading the stream until EOF.
+    (loop for message = (read-line stream nil)
+       while message do
+         (print message)
+         (force-output)
+         (send-update
+          message (remove stream (gethash key *client-groups*))))
+    ;; After reaching EOF we remove the client from the client group.
+    (setf (gethash key *client-groups*)
+          (remove stream (gethash key *client-groups*)))))
 
-(defun shared-buffer-server (host port)
+(defun send-update (message client-group)
+  "Simply sends a message recived from a client to all clients sharing a
+buffer."
+  (loop for stream in client-group do
+       (write-string message stream)
+       (force-output stream)))
+
+(defun shared-buffer-server (host)
   "Starts a server for the emacs extension shared-buffer."
-  (usocket:socket-server host port
+  (setf *client-groups* (make-hash-table :test #'equal))
+  (usocket:socket-server host +port+
                          #'handler nil
                          :in-new-thread t
                          :reuse-address t
