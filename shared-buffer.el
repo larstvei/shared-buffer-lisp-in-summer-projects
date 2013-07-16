@@ -20,18 +20,11 @@
   "A buffer-local variable pointing to the server a shared buffer is
   connected to.")
 
-(defvar *sb-change* nil
-  "A buffer-local variable indecating if a change was done by
-  shared-buffer. This is necessary because shared-buffer uses
-  after-change-functions to send updates to the server, and if a change was
-  invoked by shared-buffer it should not be sent back to the server.")
-
 (defun sb-connect-to-server (host &optional buffer)
   "This function opens a connection to a shared-buffer server, by starting a
 shared-buffer client."
   (interactive "sHost: ")
   (make-local-variable '*sb-server*)
-  (make-local-variable '*sb-change*)
   (let ((key (read-from-minibuffer "key: ")))
     (setq *sb-server*
           (make-network-process
@@ -44,14 +37,12 @@ shared-buffer client."
 (defun sb-update (start end bytes)
   "Sends an update to the server. This function is locally added
 to the 'after-change-functions hook for shared buffers."
-  (unless *sb-change*
-    (let ((package
-           (make-sb-package
-            :start start :bytes bytes
-            :text (s-lines (buffer-substring-no-properties start end)))))
-      (process-send-string *sb-server*
-                           (concat (prin1-to-string package) "\n"))))
-  (setq *sb-change* nil))
+  (let ((package
+         (make-sb-package
+          :start start :bytes bytes
+          :text (s-lines (buffer-substring-no-properties start end)))))
+    (process-send-string *sb-server*
+                         (concat (prin1-to-string package) "\n"))))
 
 (defun sb-close ()
   "Closes the connecton to the server."
@@ -66,9 +57,8 @@ to the 'after-change-functions hook for shared buffers."
            (point-max))))
 
 (defun sb-insert (strings)
-  (setq *sb-change* t)
   (insert (car strings))
-  (mapc (lambda (str) (setq *sb-change* t)
+  (mapc (lambda (str)
           (insert str) (newline)) (cdr strings)))
 
 (defun sb-client-filter (process msg)
@@ -78,12 +68,13 @@ to the 'after-change-functions hook for shared buffers."
     (let ((buffer (current-buffer))
           (package (read msg)))
       (set-buffer (process-buffer process))
+      (remove-hook 'after-change-functions 'sb-update 'local)
       (if (not (sb-possible-update-p package))
           (message "sb-warning: out of sync! Run command: sb-sync")
         (goto-char (sb-package-start package))
-        (setq *sb-change* t)
         (delete-char (sb-package-bytes package))
         (sb-insert (sb-package-text package)))
+      (add-hook 'after-change-functions 'sb-update nil 'local)
       (set-buffer buffer))))
 
 (defun sb-client-sentinel (process msg)
