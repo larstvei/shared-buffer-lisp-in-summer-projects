@@ -9,6 +9,7 @@
 ;; Public License for more details.
 
 (require 's)
+(require 'dash)
 
 (cl-defstruct sb-package start bytes text)
 
@@ -37,17 +38,19 @@ shared-buffer client."
            :name "sb-client" :buffer (or buffer (current-buffer))
            :filter 'sb-client-filter :sentinel 'sb-client-sentinel
            :family 'ipv4 :host host :service *sb-port*))
-    (process-send-string *sb-server* (s-concat key "\n"))
+    (process-send-string *sb-server* (concat key "\n"))
     (add-hook 'after-change-functions 'sb-update nil 'local)))
 
 (defun sb-update (start end bytes)
   "Sends an update to the server. This function is locally added
 to the 'after-change-functions hook for shared buffers."
   (unless *sb-change*
-    (let ((package (make-sb-package :start start :bytes bytes :text
-                                    (buffer-substring start end))))
+    (let ((package
+           (make-sb-package
+            :start start :bytes bytes
+            :text (s-lines (buffer-substring-no-properties start end)))))
       (process-send-string *sb-server*
-                           (s-concat (prin1-to-string package) "\n"))))
+                           (concat (prin1-to-string package) "\n"))))
   (setq *sb-change* nil))
 
 (defun sb-close ()
@@ -57,6 +60,17 @@ to the 'after-change-functions hook for shared buffers."
   (setq *sb-server* nil)
   (remove-hook 'after-change-functions 'sb-update 'local))
 
+(defun sb-possible-update-p (package)
+  (and (<= (+ (sb-package-start package)
+              (sb-package-bytes package))
+           (point-max))))
+
+(defun sb-insert (strings)
+  (setq *sb-change* t)
+  (insert (car strings))
+  (mapc (lambda (str) (setq *sb-change* t)
+          (insert str) (newline)) (cdr strings)))
+
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
   (message msg)
@@ -64,10 +78,12 @@ to the 'after-change-functions hook for shared buffers."
     (let ((buffer (current-buffer))
           (package (read msg)))
       (set-buffer (process-buffer process))
-      (goto-char (sb-package-start package))
-      (delete-char (sb-package-bytes package))
-      (insert (sb-package-text package))
-      (setq *sb-change* t)
+      (if (not (sb-possible-update-p package))
+          (message "sb-warning: out of sync! Run command: sb-sync")
+        (goto-char (sb-package-start package))
+        (setq *sb-change* t)
+        (delete-char (sb-package-bytes package))
+        (sb-insert (sb-package-text package)))
       (set-buffer buffer))))
 
 (defun sb-client-sentinel (process msg)
