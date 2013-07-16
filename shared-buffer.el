@@ -9,7 +9,6 @@
 ;; Public License for more details.
 
 (require 's)
-(require 'dash)
 
 (cl-defstruct sb-package start bytes text)
 
