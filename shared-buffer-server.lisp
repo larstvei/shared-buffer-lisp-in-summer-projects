@@ -20,21 +20,42 @@
   "When a connection to a client is established this function is run. It
   will read from the stream as long as the connection is open, and redirect
   messages to all clients that has provided the same key."
-  (let ((key (read-line stream)))
-    (setf (gethash key *client-groups*)
-          (cons stream (gethash key *client-groups*)))
-    ;; Reading the stream until EOF.
-    (loop for message = (read-line stream nil)
-       while message do
-         (print message)
-         (force-output)
-         (send-update
-          message (remove stream (gethash key *client-groups*))))
-    ;; After reaching EOF we remove the client from the client group.
-    (setf (gethash key *client-groups*)
-          (remove stream (gethash key *client-groups*)))))
+  (let* ((kind (read-line stream))
+         (key (read-line stream)))
+    (cond ((and (string= kind "new")
+                (gethash key *client-groups*))
+           (send-package "Choose a different key." (list stream)))
+          ((and (string= kind "existing")
+                (not (gethash key *client-groups*)))
+           (send-package (sb-kernel:%concatenate-to-string
+                          "The key " key " is not associated with any"
+                          " shared-buffer-session.") (list stream)))
+          ((or (string= kind "new")
+               (string= kind "existing"))
+           (setf (gethash key *client-groups*)
+                 (cons stream (gethash key *client-groups*)))
+           (when (string= kind "existing")
+             (send-package "send-everything"
+                           (list (second (gethash key *client-groups*)))))
+           (stream-reader stream key))
+          (t (send-package "Error in format." (list stream))))))
 
-(defun send-update (message client-group)
+(defun stream-reader (stream key)
+  ;; Reading the stream until EOF.
+  (loop for message = (read-line stream nil)
+     while message do
+     ;; -- DEBUG -- ;;
+       (print message)
+       (force-output)
+     ;; ----------- ;;
+       (send-package
+        message (remove stream (gethash key *client-groups*)))
+       (sleep 0.01))
+  ;; After reaching EOF we remove the client from the client group.
+  (setf (gethash key *client-groups*)
+        (remove stream (gethash key *client-groups*))))
+
+(defun send-package (message client-group)
   "Simply sends a message recived from a client to all clients sharing a
 buffer."
   (loop for stream in client-group do
