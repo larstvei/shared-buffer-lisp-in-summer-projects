@@ -27,7 +27,7 @@
            (send-package "Choose a different key." (list stream)))
           ((and (string= kind "existing")
                 (not (gethash key *client-groups*)))
-           (send-package (sb-kernel:%concatenate-to-string
+           (send-package (concatenate 'string
                           "The key " key " is not associated with any"
                           " shared-buffer-session.") (list stream)))
           ((or (string= kind "new")
