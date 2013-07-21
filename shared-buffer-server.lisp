@@ -16,6 +16,28 @@
 (defparameter *client-groups* nil
   "Hash table containing lists of clients working on the same buffer.")
 
+(defun send-package (message client-group)
+  "Simply sends a message recived from a client to all clients sharing a
+buffer."
+  (loop for stream in client-group do
+       (write-string message stream)
+       (force-output stream)))
+
+(defun stream-reader (stream key)
+  ;; Reading the stream until EOF.
+  (loop for message = (read-line stream nil)
+     while message do
+     ;; -- DEBUG -- ;;
+       (print message)
+       (force-output)
+     ;; ----------- ;;
+       (send-package
+        message (remove stream (gethash key *client-groups*)))
+       (sleep 0.01))
+  ;; After reaching EOF we remove the client from the client group.
+  (setf (gethash key *client-groups*)
+        (remove stream (gethash key *client-groups*))))
+
 (defun handler (stream)
   "When a connection to a client is established this function is run. It
   will read from the stream as long as the connection is open, and redirect
@@ -39,28 +61,6 @@
                            (list (second (gethash key *client-groups*)))))
            (stream-reader stream key))
           (t (send-package "Error in format." (list stream))))))
-
-(defun stream-reader (stream key)
-  ;; Reading the stream until EOF.
-  (loop for message = (read-line stream nil)
-     while message do
-     ;; -- DEBUG -- ;;
-       (print message)
-       (force-output)
-     ;; ----------- ;;
-       (send-package
-        message (remove stream (gethash key *client-groups*)))
-       (sleep 0.01))
-  ;; After reaching EOF we remove the client from the client group.
-  (setf (gethash key *client-groups*)
-        (remove stream (gethash key *client-groups*))))
-
-(defun send-package (message client-group)
-  "Simply sends a message recived from a client to all clients sharing a
-buffer."
-  (loop for stream in client-group do
-       (write-string message stream)
-       (force-output stream)))
 
 (defun shared-buffer-server (host)
   "Starts a server for the emacs extension shared-buffer."
