@@ -8,7 +8,7 @@
 ;; ABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public
 ;; License for more details.
 
-(require 's)
+(require 'cl-lib)
 
 (defstruct sb-package
   "This struct defines the format for packages sent to and
@@ -65,7 +65,8 @@ to the 'after-change-functions hook for shared buffers."
   (let ((package
          (make-sb-package
           :start start :bytes bytes
-          :text (s-lines (buffer-substring-no-properties start end)))))
+          :text (split-string (buffer-substring-no-properties start end)
+                              "\\(\n\r\\|[\n\r]\\)"))))
     (process-send-string *sb-server*
                          (concat (prin1-to-string package) "\n"))))
 
@@ -91,8 +92,9 @@ messages are handled in this function."
           *sb-server*
           (concat (prin1-to-string
                    (make-sb-package
-                    :text (s-lines (buffer-substring-no-properties
-                                    (point-min) (point-max)))
+                    :text (split-string (buffer-substring-no-properties
+                                         (point-min) (point-max))
+                                        "\\(\n\r\\|[\n\r]\\)")
                     :for-new-client t)) "\n")))
         ((string-match "The key " msg)
          (kill-buffer (process-buffer process))
