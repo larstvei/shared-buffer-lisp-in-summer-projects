@@ -13,33 +13,39 @@
 (defstruct sb-package
   "This struct defines the format for packages sent to and
   received from the server."
-  (start 1) (bytes 0) (text "") (for-new-client nil))
+  (start 1) (bytes 0) (text "") (for-new-client nil)
+  (cursor (point)) id)
 
-(defconst *sb-port* 3705
+(defconst sb-port 3705
   "Shared-buffer uses port 3705.")
 
-(defvar *sb-server* nil
+(defvar sb-key ""
+  "A buffer-local string containing the key to the associated
+  shared-bufer-session.")
+
+(defvar sb-server nil
   "A buffer-local variable pointing to the server a shared buffer is
   connected to.")
 
-(defvar *sb-key* ""
-  "A buffer-local string containing the key to the associated
-  shared-bufer-session.")
+(defvar sb-cursors (make-hash-table)
+  "A hash-table containing the other clients connected to the same
+  shared-buffer.")
 
 (defun sb-connect-to-server (host buffer)
   "This function opens a connection to a shared-buffer server, by starting a
 shared-buffer client."
   (switch-to-buffer buffer)
-  (make-local-variable '*sb-server*)
-  (make-local-variable '*sb-key*)
-  (setq *sb-key* (read-from-minibuffer "key: "))
-  (setq *sb-server*
+  (make-local-variable 'sb-key)
+  (make-local-variable 'sb-server)
+  (make-local-variable 'sb-cursors)
+  (setq sb-key (read-from-minibuffer "key: "))
+  (setq sb-server
         (make-network-process
          :name "sb-client" :buffer buffer
          :filter 'sb-client-filter :sentinel 'sb-client-sentinel
-         :family 'ipv4 :host host :service *sb-port*))
+         :family 'ipv4 :host host :service sb-port))
   (add-hook 'after-change-functions 'sb-send-update nil 'local)
-  (equal 'open (process-status *sb-server*)))
+  (equal 'open (process-status sb-server)))
 
 (defun sb-connect-to-shared-buffer (host &optional buffer)
   "This interactive function is used to connect to an already existing
@@ -47,16 +53,16 @@ shared-buffer-session."
   (interactive "sHost: ")
   (if (sb-connect-to-server
        host (or buffer (generate-new-buffer "*shared-buffer*")))
-      (process-send-string *sb-server* (concat "existing\n" *sb-key* "\n"))
+      (process-send-string sb-server (concat "existing\n" sb-key "\n"))
     (message "Could not connect."))
-  (set-process-filter *sb-server* 'sb-client-new-connection-filter))
+  (set-process-filter sb-server 'sb-client-new-connection-filter))
 
 (defun sb-share-this-buffer (host &optional buffer)
   "This interactive function is used to initiate a shared-buffer-session."
   (interactive "sHost: ")
   (if (sb-connect-to-server
        host (or buffer (current-buffer)))
-      (process-send-string *sb-server* (concat "new\n" *sb-key* "\n"))
+      (process-send-string sb-server (concat "new\n" sb-key "\n"))
     (message "Could not connect.")))
 
 (defun sb-send-update (start end bytes)
@@ -66,15 +72,15 @@ to the 'after-change-functions hook for shared buffers."
          (make-sb-package
           :start start :bytes bytes
           :text (split-string (buffer-substring-no-properties start end)
-                              "\\(\n\r\\|[\n\r]\\)"))))
-    (process-send-string *sb-server*
+                              "\\(\r\n\\|[\n\r]\\)"))))
+    (process-send-string sb-server
                          (concat (prin1-to-string package) "\n"))))
 
 (defun sb-close ()
   "Closes the connecton to the server."
   (interactive)
-  (delete-process *sb-server*)
-  (setq *sb-server* nil)
+  (delete-process sb-server)
+  (setq sb-server nil)
   (remove-hook 'after-change-functions 'sb-send-update 'local))
 
 (defun sb-insert (strings)
@@ -84,17 +90,41 @@ string does not contain a line break, but all others naturally does."
   (mapc (lambda (str)
           (newline) (insert str)) (cdr strings)))
 
+(defun sb-insert-cursor-at-eol (id cursor-point)
+  "Inserts a cursor-like overlay at the end of a line."
+  (puthash id (make-overlay cursor-point cursor-point nil nil nil)
+           sb-cursors)
+  (overlay-put (gethash id sb-cursors) 'after-string
+               (propertize " " 'face '(background-color . "green"))))
+
+(defun sb-insert-cursor-inline (id cursor-point)
+  "Inserts a cursor-like overlay."
+  (puthash id (make-overlay cursor-point (1+ cursor-point) nil nil nil)
+           sb-cursors)
+  (overlay-put (gethash id sb-cursors) 'face
+               '(t (background-color . "green"))))
+
+(defun sb-move-cursor (id cursor-point)
+  "Moves the a clients cursor. This function is heavily inspired by Magnar
+Sveen's multible-cursors.el."
+  (when (gethash id sb-cursors nil)
+    (delete-overlay (gethash id sb-cursors nil)))
+  (goto-char cursor-point)
+  (if (eolp)
+      (sb-insert-cursor-at-eol id cursor-point)
+    (sb-insert-cursor-inline id cursor-point)))
+
 (defun message-from-server (process msg)
   "The sever does not send messages with the sb-package format. These
 messages are handled in this function."
   (cond ((string= msg "send-everything")
          (process-send-string
-          *sb-server*
+          sb-server
           (concat (prin1-to-string
                    (make-sb-package
                     :text (split-string (buffer-substring-no-properties
                                          (point-min) (point-max))
-                                        "\\(\n\r\\|[\n\r]\\)")
+                                        "\\(\r\n\\|[\n\r]\\)")
                     :for-new-client t)) "\n")))
         ((string-match "The key " msg)
          (kill-buffer (process-buffer process))
@@ -110,7 +140,9 @@ messages are handled in this function."
       (unless (sb-package-for-new-client package)
         (goto-char (sb-package-start package))
         (delete-char (sb-package-bytes package))
-        (sb-insert (sb-package-text package)))
+        (sb-insert (sb-package-text package))
+        (sb-move-cursor (sb-package-id package)
+                        (sb-package-cursor package)))
       (add-hook 'after-change-functions 'sb-send-update nil 'local)
       (set-buffer old-curr-buf))))
 
@@ -119,7 +151,9 @@ messages are handled in this function."
   most of a shared-buffer-session sb-client-filter will be used."
   (save-excursion
     (let ((old-curr-buf (current-buffer))
-          (package (read msg)))
+          (package (read msg))
+          (id (read msg)))
+
       (set-buffer (process-buffer process))
       (remove-hook 'after-change-functions 'sb-send-update 'local)
       (sb-insert (sb-package-text package))
