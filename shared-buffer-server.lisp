@@ -28,11 +28,19 @@ buffer."
   (loop for message = (read-line stream nil)
      while message do
      ;; -- DEBUG -- ;;
-       (print message)
+       (print
+        (concatenate 'string
+                     (subseq message 0 (- (length message) 4))
+                     (write-to-string (sxhash (write-to-string stream))) "]"))
        (force-output)
      ;; ----------- ;;
        (send-package
-        message (remove stream (gethash key *client-groups*)))
+        (concatenate 'string
+                     ;; Look at the whole message exept "nil]"
+                     (subseq message 0 (- (length message) 4))
+                     (write-to-string
+                      (sxhash (write-to-string stream))) "]")
+        (remove stream (gethash key *client-groups*)))
        (sleep 0.01))
   ;; After reaching EOF we remove the client from the client group.
   (setf (gethash key *client-groups*)
@@ -49,9 +57,10 @@ buffer."
            (send-package "Choose a different key." (list stream)))
           ((and (string= kind "existing")
                 (not (gethash key *client-groups*)))
-           (send-package (concatenate 'string
-                          "The key " key " is not associated with any"
-                          " shared-buffer-session.") (list stream)))
+           (send-package
+            (concatenate 'string
+                         "The key " key " is not associated with any"
+                         " shared-buffer-session.") (list stream)))
           ((or (string= kind "new")
                (string= kind "existing"))
            (setf (gethash key *client-groups*)
