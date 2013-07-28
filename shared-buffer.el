@@ -14,7 +14,7 @@
   "This struct defines the format for packages sent to and
   received from the server."
   (start 1) (bytes 0) (text "") (for-new-client nil)
-  (cursor (point)) id)
+  (cursor sb-point) id)
 
 (defconst sb-port 3705
   "Shared-buffer uses port 3705.")
@@ -31,6 +31,13 @@
   "A hash-table containing the other clients connected to the same
   shared-buffer.")
 
+(defvar sb-dont-send nil
+  "Indecates that the next package should not be sent, if set to a non-nil
+  value.")
+
+(defvar sb-point 1
+  "A variable containing the current cursor position.")
+
 (defun sb-connect-to-server (host buffer)
   "This function opens a connection to a shared-buffer server, by starting a
 shared-buffer client."
@@ -38,6 +45,8 @@ shared-buffer client."
   (make-local-variable 'sb-key)
   (make-local-variable 'sb-server)
   (make-local-variable 'sb-cursors)
+  (make-local-variable 'sb-dont-send)
+  (make-local-variable 'sb-point)
   (setq sb-key (read-from-minibuffer "key: "))
   (setq sb-server
         (make-network-process
@@ -45,6 +54,7 @@ shared-buffer client."
          :filter 'sb-client-filter :sentinel 'sb-client-sentinel
          :family 'ipv4 :host host :service sb-port))
   (add-hook 'after-change-functions 'sb-send-update nil 'local)
+  (add-hook 'post-command-hook 'sb-send-cursor-update nil 'local)
   (equal 'open (process-status sb-server)))
 
 (defun sb-connect-to-shared-buffer (host &optional buffer)
@@ -65,23 +75,32 @@ shared-buffer-session."
       (process-send-string sb-server (concat "new\n" sb-key "\n"))
     (message "Could not connect.")))
 
+(defun sb-send-cursor-update ()
+  (unless sb-dont-send
+    (sb-send-update 1 1 0))
+  (setq sb-dont-send nil))
+
 (defun sb-send-update (start end bytes)
   "Sends an update to the server. This function is locally added
 to the 'after-change-functions hook for shared buffers."
-  (let ((package
+  (unless this-command
+    (setq sb-point (point)))
+   (let ((package
          (make-sb-package
           :start start :bytes bytes
           :text (split-string (buffer-substring-no-properties start end)
                               "\\(\r\n\\|[\n\r]\\)"))))
     (process-send-string sb-server
-                         (concat (prin1-to-string package) "\n"))))
+                         (concat (prin1-to-string package) "\n")))
+  (setq sb-dont-send t))
 
 (defun sb-close ()
   "Closes the connecton to the server."
   (interactive)
   (delete-process sb-server)
   (setq sb-server nil)
-  (remove-hook 'after-change-functions 'sb-send-update 'local))
+  (remove-hook 'after-change-functions 'sb-send-update 'local)
+  (remove-hook 'post-command-hook 'sb-filter-updates 'local))
 
 (defun sb-insert (strings)
   "Each string in strings represents a line. Messages containing only one
@@ -137,6 +156,7 @@ messages are handled in this function."
     (let ((old-curr-buf (current-buffer)))
       (set-buffer buffer)
       (remove-hook 'after-change-functions 'sb-send-update 'local)
+      (remove-hook 'post-command-hook 'sb-send-cursor-update 'local)
       (unless (sb-package-for-new-client package)
         (goto-char (sb-package-start package))
         (delete-char (sb-package-bytes package))
@@ -144,6 +164,7 @@ messages are handled in this function."
         (sb-move-cursor (sb-package-id package)
                         (sb-package-cursor package)))
       (add-hook 'after-change-functions 'sb-send-update nil 'local)
+      (add-hook 'post-command-hook 'sb-send-cursor-update nil 'local)
       (set-buffer old-curr-buf))))
 
 (defun sb-client-new-connection-filter (process msg)
