@@ -83,9 +83,9 @@ shared-buffer-session."
 (defun sb-send-update (start end bytes)
   "Sends an update to the server. This function is locally added
 to the 'after-change-functions hook for shared buffers."
-  (unless this-command
+  (when this-command
     (setq sb-point (point)))
-   (let ((package
+  (let ((package
          (make-sb-package
           :start start :bytes bytes
           :text (split-string (buffer-substring-no-properties start end)
