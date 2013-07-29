@@ -41,7 +41,7 @@ buffer."
                      (write-to-string
                       (sxhash (write-to-string stream))) "]")
         (remove stream (gethash key *client-groups*)))
-       (sleep 0.01))
+       (sleep 0.025))
   ;; After reaching EOF we remove the client from the client group.
   (setf (gethash key *client-groups*)
         (remove stream (gethash key *client-groups*))))
