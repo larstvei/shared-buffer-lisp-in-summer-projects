@@ -85,22 +85,34 @@ shared-buffer-session."
 to the 'after-change-functions hook for shared buffers."
   (when this-command
     (setq sb-point (point)))
-  (let ((package
-         (make-sb-package
-          :start start :bytes bytes
-          :text (split-string (buffer-substring-no-properties start end)
-                              "\\(\r\n\\|[\n\r]\\)"))))
-    (process-send-string sb-server
-                         (concat (prin1-to-string package) "\n")))
+  (sb-send-package start bytes (buffer-substring-no-properties start end))
   (setq sb-dont-send t))
+
+(defun sb-send-package (start bytes string)
+  (loop for text in (sb-string-chunks (expt 2 11) string) do
+        (process-send-string
+         sb-server
+         (concat
+          (prin1-to-string
+           (make-sb-package
+            :start start :bytes bytes
+            :text (split-string text "\\(\r\n\\|[\n\r]\\)"))) "\n"))
+        (setq start (+ start (expt 2 11)))))
+
+(defun sb-string-chunks (max-len str)
+  (if (< (length str) max-len)
+      (list str)
+    (cons (substring str 0 max-len)
+          (sb-string-chunks max-len (substring str max-len)))))
+
 
 (defun sb-close ()
   "Closes the connecton to the server."
   (interactive)
-  (delete-process sb-server)
-  (setq sb-server nil)
+  (remove-hook 'post-command-hook 'sb-send-cursor-update 'local)
   (remove-hook 'after-change-functions 'sb-send-update 'local)
-  (remove-hook 'post-command-hook 'sb-filter-updates 'local))
+  (delete-process sb-server)
+  (setq sb-server nil))
 
 (defun sb-insert (strings)
   "Each string in strings represents a line. Messages containing only one
@@ -137,14 +149,8 @@ Sveen's multible-cursors.el."
   "The sever does not send messages with the sb-package format. These
 messages are handled in this function."
   (cond ((string= msg "send-everything")
-         (process-send-string
-          sb-server
-          (concat (prin1-to-string
-                   (make-sb-package
-                    :text (split-string (buffer-substring-no-properties
-                                         (point-min) (point-max))
-                                        "\\(\r\n\\|[\n\r]\\)")
-                    :for-new-client t)) "\n")))
+         (sb-send-package 1 0 (buffer-substring-no-properties
+                               (point-min) (point-max))))
         ((string-match "The key " msg)
          (kill-buffer (process-buffer process))
          (message msg))
@@ -155,16 +161,14 @@ messages are handled in this function."
   (save-excursion
     (let ((old-curr-buf (current-buffer)))
       (set-buffer buffer)
-      (remove-hook 'after-change-functions 'sb-send-update 'local)
-      (remove-hook 'post-command-hook 'sb-send-cursor-update 'local)
+      (setq inhibit-modification-hooks t)
       (unless (sb-package-for-new-client package)
         (goto-char (sb-package-start package))
         (delete-char (sb-package-bytes package))
         (sb-insert (sb-package-text package))
         (sb-move-cursor (sb-package-id package)
                         (sb-package-cursor package)))
-      (add-hook 'after-change-functions 'sb-send-update nil 'local)
-      (add-hook 'post-command-hook 'sb-send-cursor-update nil 'local)
+      (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf))))
 
 (defun sb-client-new-connection-filter (process msg)
@@ -172,13 +176,11 @@ messages are handled in this function."
   most of a shared-buffer-session sb-client-filter will be used."
   (save-excursion
     (let ((old-curr-buf (current-buffer))
-          (package (read msg))
-          (id (read msg)))
-
+          (package (read msg)))
       (set-buffer (process-buffer process))
-      (remove-hook 'after-change-functions 'sb-send-update 'local)
+      (setq inhibit-modification-hooks t)
       (sb-insert (sb-package-text package))
-      (add-hook 'after-change-functions 'sb-send-update nil 'local)
+      (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf)))
   (set-process-filter process 'sb-client-filter))
 
