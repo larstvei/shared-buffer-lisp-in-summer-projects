@@ -13,14 +13,15 @@
 (defstruct sb-package
   "This struct defines the format for packages sent to and
   received from the server."
-  (start 1) (bytes 0) text for-new-client (cursor sb-point) id color)
+  (start 1) (bytes 0) text for-new-client (cursor sb-point)
+  region-start region-end id color)
 
 (defstruct sb-client
   "This struct contains information about the other clients connected to the
 same shared buffer. The cursor is just an overlay object, and the color is
   the color of the overlay. The timer ensures that an overlay will (if not
   moved) be deleted after ten seconds."
-  cursor color timer)
+  region cursor color timer)
 
 (defcustom sb-port 3705
   "Shared-buffer uses port 3705 by default."
@@ -85,6 +86,8 @@ shared-buffer-session."
     (message "Could not connect.")))
 
 (defun sb-send-cursor-update ()
+  "This function is run after a command has been executed. It sends a
+package to the server containing cursor location."
   (unless sb-dont-send
     (sb-send-update 1 1 0))
   (setq sb-dont-send nil))
@@ -97,7 +100,7 @@ to the 'after-change-functions hook for shared buffers."
   (sb-send-package start bytes (buffer-substring-no-properties start end))
   (setq sb-dont-send t))
 
-(defun sb-send-package (start bytes string)
+(defun sb-send-package (start bytes string &optional for-new-client)
   "Sends a package to the server. TCP has a maximum package size of 4KB, so
 we have to make sure not to send packages this large. This is resolved by
   splitting strings larger than 2KB in 2KB chunks."
@@ -108,7 +111,10 @@ we have to make sure not to send packages this large. This is resolved by
           (prin1-to-string
            (make-sb-package
             :start start :bytes bytes
-            :text (split-string text "\\(\r\n\\|[\n\r]\\)"))) "\n"))
+            :text (split-string text "\\(\r\n\\|[\n\r]\\)")
+            :for-new-client for-new-client
+            :region-start (when (region-active-p) (region-beginning))
+            :region-end (when (region-active-p) (region-end)))) "\n"))
         (setq start (+ start (expt 2 11)))))
 
 (defun sb-string-chunks (max-len str)
@@ -152,12 +158,20 @@ string does not contain a line break, but all others naturally does."
 (defun sb-move-cursor (client cursor-point)
   "Moves the a clients cursor. This function is heavily inspired by Magnar
 Sveen's multible-cursors.el."
-  (delete-overlay (sb-client-cursor client))
+  (sb-delete-overlays client)
   (goto-char cursor-point)
   (if (eolp)
       (sb-insert-cursor-at-eol client cursor-point)
     (sb-insert-cursor-inline client cursor-point))
   (sb-reset-timer client))
+
+(defun sb-update-region (client region-start region-end)
+  "If a clients' region is active both region-start and region-end will be
+integers. Then we simply add an overlay imitating a region."
+  (when (and region-start region-end)
+    (let ((overlay (make-overlay region-start region-end nil nil t)))
+      (overlay-put overlay 'face '(t :inherit region))
+      (setf (sb-client-region client) overlay))))
 
 (defun sb-reset-timer (client)
   "A cursor will be removed after being idle for 10 seconds. If the cursor
@@ -165,8 +179,13 @@ is updated within this time frame the timer must be reset."
   (when (timerp (sb-client-timer client))
     (cancel-timer (sb-client-timer client))
     (setf (sb-client-timer client)
-          (run-at-time "10 sec" nil (lambda (o) (delete-overlay o))
-                       (sb-client-cursor client)))))
+          (run-at-time "10 sec" nil 'sb-delete-overlays client))))
+
+(defun sb-delete-overlays (client)
+  "Removes a clients cursor, and region if it's active."
+  (when (sb-client-region client)
+    (delete-overlay (sb-client-region client)))
+  (delete-overlay (sb-client-cursor client)))
 
 (defun sb-update-buffer (package buffer)
   "Makes changes to the shared buffer specified by the package."
@@ -187,7 +206,9 @@ is updated within this time frame the timer must be reset."
         (goto-char (sb-package-start package))
         (delete-char (sb-package-bytes package))
         (sb-insert (sb-package-text package))
-        (sb-move-cursor client (sb-package-cursor package)))
+        (sb-move-cursor client (sb-package-cursor package))
+        (sb-update-region client (sb-package-region-start package)
+                          (sb-package-region-end package)))
       (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf))))
 
@@ -213,7 +234,7 @@ messages are handled in this function."
       (cond ((not (stringp msg)) (print msg))
             ((string= msg "send-everything")
              (sb-send-package 1 0 (buffer-substring-no-properties
-                                   (point-min) (point-max))))
+                                   (point-min) (point-max)) t))
             ((string-match "The key " msg)
              (kill-buffer (process-buffer process))
              (print msg))
