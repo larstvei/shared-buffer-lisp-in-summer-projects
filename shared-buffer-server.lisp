@@ -77,7 +77,8 @@ existing shared buffer session. Here it's given an id, and a color."
     (let ((client-group (gethash key *client-groups*))
           (client (make-client
                    :key key :stream stream :id (gensym) :color color)))
-      (send-package "send-everything" (client-group-clients client-group))
+      (send-package "send-everything"
+                    (last (client-group-clients client-group)))
       (setf (client-group-clients client-group)
             (cons client (client-group-clients client-group)))
       (setf (client-group-colors client-group) colors)
