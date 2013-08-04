@@ -13,11 +13,19 @@
 (defstruct sb-package
   "This struct defines the format for packages sent to and
   received from the server."
-  (start 1) (bytes 0) (text "") (for-new-client nil)
-  (cursor sb-point) id)
+  (start 1) (bytes 0) text for-new-client (cursor sb-point) id color)
 
-(defconst sb-port 3705
-  "Shared-buffer uses port 3705.")
+(defstruct sb-client
+  "This struct contains information about the other clients connected to the
+same shared buffer. The cursor is just an overlay object, and the color is
+  the color of the overlay. The timer ensures that an overlay will (if not
+  moved) be deleted after ten seconds."
+  cursor color timer)
+
+(defcustom sb-port 3705
+  "Shared-buffer uses port 3705 by default."
+  :group 'shared-buffer
+  :type 'integer)
 
 (defvar sb-key ""
   "A buffer-local string containing the key to the associated
@@ -27,7 +35,7 @@
   "A buffer-local variable pointing to the server a shared buffer is
   connected to.")
 
-(defvar sb-cursors (make-hash-table)
+(defvar sb-clients (make-hash-table)
   "A hash-table containing the other clients connected to the same
   shared-buffer.")
 
@@ -44,7 +52,7 @@ shared-buffer client."
   (switch-to-buffer buffer)
   (make-local-variable 'sb-key)
   (make-local-variable 'sb-server)
-  (make-local-variable 'sb-cursors)
+  (make-local-variable 'sb-clients)
   (make-local-variable 'sb-dont-send)
   (make-local-variable 'sb-point)
   (setq sb-key (read-from-minibuffer "key: "))
@@ -64,7 +72,8 @@ shared-buffer-session."
   (if (sb-connect-to-server
        host (or buffer (generate-new-buffer "*shared-buffer*")))
       (process-send-string sb-server (concat "existing\n" sb-key "\n"))
-    (message "Could not connect."))
+    (message "Could not connect.")
+    (kill-buffer))
   (set-process-filter sb-server 'sb-client-new-connection-filter))
 
 (defun sb-share-this-buffer (host &optional buffer)
@@ -89,6 +98,9 @@ to the 'after-change-functions hook for shared buffers."
   (setq sb-dont-send t))
 
 (defun sb-send-package (start bytes string)
+  "Sends a package to the server. TCP has a maximum package size of 4KB, so
+we have to make sure not to send packages this large. This is resolved by
+  splitting strings larger than 2KB in 2KB chunks."
   (loop for text in (sb-string-chunks (expt 2 11) string) do
         (process-send-string
          sb-server
@@ -100,11 +112,12 @@ to the 'after-change-functions hook for shared buffers."
         (setq start (+ start (expt 2 11)))))
 
 (defun sb-string-chunks (max-len str)
+  "Returns a list of strings, where max-len is the maximum length of each
+string."
   (if (< (length str) max-len)
       (list str)
     (cons (substring str 0 max-len)
           (sb-string-chunks max-len (substring str max-len)))))
-
 
 (defun sb-close ()
   "Closes the connecton to the server."
@@ -121,59 +134,66 @@ string does not contain a line break, but all others naturally does."
   (mapc (lambda (str)
           (newline) (insert str)) (cdr strings)))
 
-(defun sb-insert-cursor-at-eol (id cursor-point)
+(defun sb-insert-cursor-at-eol (client cursor-point)
   "Inserts a cursor-like overlay at the end of a line."
-  (puthash id (make-overlay cursor-point cursor-point nil nil nil)
-           sb-cursors)
-  (overlay-put (gethash id sb-cursors) 'after-string
-               (propertize " " 'face '(background-color . "green"))))
+  (setf (sb-client-cursor client)
+        (make-overlay cursor-point cursor-point nil nil nil))
+  (overlay-put (sb-client-cursor client) 'after-string
+               (propertize " " 'face (cons 'background-color
+                                           (sb-client-color client)))))
 
-(defun sb-insert-cursor-inline (id cursor-point)
+(defun sb-insert-cursor-inline (client cursor-point)
   "Inserts a cursor-like overlay."
-  (puthash id (make-overlay cursor-point (1+ cursor-point) nil nil nil)
-           sb-cursors)
-  (overlay-put (gethash id sb-cursors) 'face
-               '(t (background-color . "green"))))
+  (setf (sb-client-cursor client)
+        (make-overlay cursor-point (1+ cursor-point) nil nil nil))
+  (overlay-put (sb-client-cursor client) 'face
+               (cons 'background-color (sb-client-color client))))
 
-(defun sb-move-cursor (id cursor-point)
+(defun sb-move-cursor (client cursor-point)
   "Moves the a clients cursor. This function is heavily inspired by Magnar
 Sveen's multible-cursors.el."
-  (when (gethash id sb-cursors nil)
-    (delete-overlay (gethash id sb-cursors nil)))
+  (delete-overlay (sb-client-cursor client))
   (goto-char cursor-point)
   (if (eolp)
-      (sb-insert-cursor-at-eol id cursor-point)
-    (sb-insert-cursor-inline id cursor-point)))
+      (sb-insert-cursor-at-eol client cursor-point)
+    (sb-insert-cursor-inline client cursor-point))
+  (sb-reset-timer client))
 
-(defun message-from-server (process msg)
-  "The sever does not send messages with the sb-package format. These
-messages are handled in this function."
-  (cond ((string= msg "send-everything")
-         (sb-send-package 1 0 (buffer-substring-no-properties
-                               (point-min) (point-max))))
-        ((string-match "The key " msg)
-         (kill-buffer (process-buffer process))
-         (message msg))
-        (t (message msg))))
+(defun sb-reset-timer (client)
+  "A cursor will be removed after being idle for 10 seconds. If the cursor
+is updated within this time frame the timer must be reset."
+  (when (timerp (sb-client-timer client))
+    (cancel-timer (sb-client-timer client))
+    (setf (sb-client-timer client)
+          (run-at-time "10 sec" nil (lambda (o) (delete-overlay o))
+                       (sb-client-cursor client)))))
 
 (defun sb-update-buffer (package buffer)
   "Makes changes to the shared buffer specified by the package."
+  (unless (gethash (sb-package-id package) sb-clients nil)
+    ;; A new client has connected to the shared buffer.
+    (puthash
+     (sb-package-id package)
+     (make-sb-client
+      :cursor (make-overlay 1 1 nil nil nil)
+      :color (sb-package-color package)
+      :timer (run-at-time "0 sec" nil (lambda () 'dummy))) sb-clients))
   (save-excursion
-    (let ((old-curr-buf (current-buffer)))
+    (let ((old-curr-buf (current-buffer))
+          (client (gethash (sb-package-id package) sb-clients)))
       (set-buffer buffer)
       (setq inhibit-modification-hooks t)
       (unless (sb-package-for-new-client package)
         (goto-char (sb-package-start package))
         (delete-char (sb-package-bytes package))
         (sb-insert (sb-package-text package))
-        (sb-move-cursor (sb-package-id package)
-                        (sb-package-cursor package)))
+        (sb-move-cursor client (sb-package-cursor package)))
       (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf))))
 
 (defun sb-client-new-connection-filter (process msg)
   "This filter is used when a connection is initiated. During
-  most of a shared-buffer-session sb-client-filter will be used."
+  most of a shared buffer session, sb-client-filter will be used."
   (save-excursion
     (let ((old-curr-buf (current-buffer))
           (package (read msg)))
@@ -183,6 +203,22 @@ messages are handled in this function."
       (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf)))
   (set-process-filter process 'sb-client-filter))
+
+(defun message-from-server (process msg)
+  "The sever does not send messages with the sb-package format. These
+messages are handled in this function."
+  (save-excursion
+    (let ((old-buffer (current-buffer)))
+      (set-buffer (process-buffer process))
+      (cond ((not (stringp msg)) (print msg))
+            ((string= msg "send-everything")
+             (sb-send-package 1 0 (buffer-substring-no-properties
+                                   (point-min) (point-max))))
+            ((string-match "The key " msg)
+             (kill-buffer (process-buffer process))
+             (print msg))
+            (t (print msg)))
+      (set-buffer old-buffer))))
 
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
