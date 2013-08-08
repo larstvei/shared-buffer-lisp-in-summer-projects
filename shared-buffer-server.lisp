@@ -34,7 +34,7 @@ buffer."
 
   (loop for client in client-group do
        (write-string message (client-stream client))
-       (force-output (client-stream client))))
+       (finish-output (client-stream client))))
 
 (defun remove-from-group (client)
   "Fetches the client-group the given client is a part of, and returns it's
@@ -53,8 +53,7 @@ will be called. Every time it receives a package it will make a few changes
         (format nil "~a ~a \"~a\"]"
                 (subseq message 0 (- (length message) 9))
                 (client-id client) (client-color client))
-        (remove-from-group client))
-       (sleep 0.025))
+        (remove-from-group client)))
   ;; After reaching EOF we remove the client from the client group. If that
   ;; was the last connected client the key should no longer be associated
   ;; with a key. 
@@ -125,3 +124,5 @@ session. We let the key be associated with a new client-group, which
                          :in-new-thread t
                          :reuse-address t
                          :multi-threading t))
+
+(defvar *server* (shared-buffer-server "localhost"))
