@@ -8,7 +8,7 @@
 ;; ABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public
 ;; License for more details.
 
-(require 'cl-lib)
+(eval-when-compile (require 'cl-lib))
 
 (defstruct sb-package
   "This struct defines the format for packages sent to and
@@ -47,6 +47,10 @@ same shared buffer. The cursor is just an overlay object, and the color is
 (defvar sb-point 1
   "A variable containing the current cursor position.")
 
+(defvar sb-msg ""
+  "A message from the server is temporarily stored in sb-msg. A message
+  larger than 4KB will be read in 4KB bulks.")
+
 (defun sb-connect-to-server (host buffer)
   "This function opens a connection to a shared-buffer server, by starting a
 shared-buffer client."
@@ -56,6 +60,7 @@ shared-buffer client."
   (make-local-variable 'sb-clients)
   (make-local-variable 'sb-dont-send)
   (make-local-variable 'sb-point)
+  (setq process-connection-type nil)
   (setq sb-key (read-from-minibuffer "key: "))
   (setq sb-server
         (make-network-process
@@ -101,9 +106,7 @@ to the 'after-change-functions hook for shared buffers."
   (setq sb-dont-send t))
 
 (defun sb-send-package (start bytes string &optional for-new-client)
-  "Sends a package to the server. TCP has a maximum package size of 4KB, so
-we have to make sure not to send packages this large. This is resolved by
-  splitting strings larger than 2KB in 2KB chunks."
+  "Sends a package to the server."
   (loop for text in (sb-string-chunks (expt 2 11) string) do
         (process-send-string
          sb-server
@@ -170,7 +173,7 @@ Sveen's multible-cursors.el."
 integers. Then we simply add an overlay imitating a region."
   (when (and region-start region-end)
     (let ((overlay (make-overlay region-start region-end nil nil t)))
-      (overlay-put overlay 'face '(t :inherit region))
+      (overlay-put overlay 'face '(:inherit region))
       (setf (sb-client-region client) overlay))))
 
 (defun sb-reset-timer (client)
@@ -189,6 +192,7 @@ is updated within this time frame the timer must be reset."
 
 (defun sb-update-buffer (package buffer)
   "Makes changes to the shared buffer specified by the package."
+  (setq inhibit-modification-hooks t)
   (unless (gethash (sb-package-id package) sb-clients nil)
     ;; A new client has connected to the shared buffer.
     (puthash
@@ -201,7 +205,6 @@ is updated within this time frame the timer must be reset."
     (let ((old-curr-buf (current-buffer))
           (client (gethash (sb-package-id package) sb-clients)))
       (set-buffer buffer)
-      (setq inhibit-modification-hooks t)
       (unless (sb-package-for-new-client package)
         (goto-char (sb-package-start package))
         (delete-char (sb-package-bytes package))
@@ -215,15 +218,18 @@ is updated within this time frame the timer must be reset."
 (defun sb-client-new-connection-filter (process msg)
   "This filter is used when a connection is initiated. During
   most of a shared buffer session, sb-client-filter will be used."
-  (save-excursion
-    (let ((old-curr-buf (current-buffer))
-          (package (read msg)))
-      (set-buffer (process-buffer process))
+  (if (string-match "The key " msg)
+      (progn (sb-close) (message msg)
+             (kill-buffer (process-buffer process)))
+    (save-excursion
       (setq inhibit-modification-hooks t)
-      (sb-insert (sb-package-text package))
-      (setq inhibit-modification-hooks nil)
-      (set-buffer old-curr-buf)))
-  (set-process-filter process 'sb-client-filter))
+      (let ((old-curr-buf (current-buffer))
+            (package (read msg)))
+        (set-buffer (process-buffer process))
+        (sb-insert (sb-package-text package))
+        (setq inhibit-modification-hooks nil)
+        (set-buffer old-curr-buf)))
+    (set-process-filter process 'sb-client-filter)))
 
 (defun message-from-server (process msg)
   "The sever does not send messages with the sb-package format. These
@@ -235,17 +241,24 @@ messages are handled in this function."
             ((string= msg "send-everything")
              (sb-send-package 1 0 (buffer-substring-no-properties
                                    (point-min) (point-max)) t))
-            ((string-match "The key " msg)
-             (kill-buffer (process-buffer process))
-             (print msg))
             (t (print msg)))
       (set-buffer old-buffer))))
 
+(defun sb-handle-recieved-string (string process)
+  (cond ((string= string "") 'ignore)
+        ((string-match "-struct-sb-package" string)
+         (let ((package (read (concat "[cl" string))))
+           (sb-update-buffer package (process-buffer process))))
+        (t (message-from-server process string))))
+
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
-  (if (not (string-match "\\[cl-struct-sb-package" msg))
-      (message-from-server process msg)
-    (sb-update-buffer (read msg) (process-buffer process))))
+  (setq sb-msg (concat sb-msg msg))
+  (when (< (length msg) (- (expt 2 12) 1))
+    (let ((strings (split-string sb-msg "\\[cl")))
+      (mapc (lambda (str) (sb-handle-recieved-string str process))
+            strings)
+      (setq sb-msg ""))))
 
 (defun sb-client-sentinel (process msg)
   (message msg))
