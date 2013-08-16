@@ -113,19 +113,16 @@ to the 'after-change-functions hook for shared buffers."
 
 (defun sb-send-package (start bytes string &optional for-new-client)
   "Sends a package to the server."
-  (loop for text in (sb-string-chunks (expt 2 11) string) do
-        (process-send-string
-         sb-server
-         (concat
-          (prin1-to-string
-           (make-sb-package
-            :start start :bytes bytes
-            :text (split-string text "\\(\r\n\\|[\n\r]\\)")
-            :for-new-client for-new-client
-            :region-start (when (region-active-p) (region-beginning))
-            :region-end (when (region-active-p) (region-end)))) "\n"))
-        (setq start (+ start (expt 2 11) 1))
-        (setq bytes 0)))
+  (process-send-string
+   sb-server
+   (concat
+    (prin1-to-string
+     (make-sb-package
+      :start start :bytes bytes
+      :text (split-string string "\\(\r\n\\|[\n\r]\\)")
+      :for-new-client for-new-client
+      :region-start (when (region-active-p) (region-beginning))
+      :region-end (when (region-active-p) (region-end)))) "\n")))
 
 (defun sb-string-chunks (max-len str)
   "Returns a list of strings, where max-len is the maximum length of each
@@ -179,9 +176,7 @@ Sveen's multible-cursors.el."
 (defun sb-update-region (client region-start region-end)
   "If a clients' region is active both region-start and region-end will be
 integers. Then we simply add an overlay imitating a region."
-  (when (and region-start region-end
-             (< region-start (point-max))
-             (< region-end (point-max)))
+  (when (and region-start region-end)
     (let ((overlay (make-overlay region-start region-end nil nil t)))
       (overlay-put overlay 'face '(:inherit region))
       (setf (sb-client-region client) overlay))))
@@ -200,6 +195,8 @@ is updated within this time frame the timer must be reset."
     (delete-overlay (sb-client-region client)))
   (delete-overlay (sb-client-cursor client)))
 
+
+
 (defun sb-update-buffer (package buffer)
   "Makes changes to the shared buffer specified by the package."
   (setq inhibit-modification-hooks t)
@@ -213,8 +210,10 @@ is updated within this time frame the timer must be reset."
       :timer (run-at-time "0 sec" nil (lambda () 'dummy))) sb-clients))
   (save-excursion
     (let ((old-curr-buf (current-buffer))
-          (client (gethash (sb-package-id package) sb-clients)))
+          (client (gethash (sb-package-id package) sb-clients))
+          (auto-fill auto-fill-function))
       (set-buffer buffer)
+      (setq auto-fill-function nil)
       (unless (and (not sb-new-client)
                    (sb-package-for-new-client package))
         (goto-char (sb-package-start package))
@@ -225,6 +224,7 @@ is updated within this time frame the timer must be reset."
                           (sb-package-region-end package)))
       (unless (sb-package-for-new-client package)
         (setq sb-new-client nil))
+      (setq auto-fill-function auto-fill)
       (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf))))
 
@@ -253,8 +253,11 @@ messages are handled in this function."
 
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
+  (message "%d" (length msg))
   (setq sb-msg (concat sb-msg msg))
-  (when (< (length msg) (expt 2 12))
+  (unless (or (= (length msg) (expt 2 11))
+              (= (length msg) (expt 2 12)))
+    (message "sb-handle-recieved-string!")
     (let ((strings (split-string sb-msg "\\[cl")))
       (mapc (lambda (str) (sb-handle-recieved-string str process))
             strings)
