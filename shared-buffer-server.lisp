@@ -8,7 +8,7 @@
 ;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 ;; GNU General Public License for more details.
 
-(ql:quickload "usocket")
+(ql:quickload :usocket)
 
 (defconstant +port+ 3705
   "Shared-buffer uses port 3705.")
@@ -23,18 +23,27 @@
 
 (defstruct client-group clients colors)
 
+(defun string-chunks (max-len str)
+  "Returns a list of strings, where max-len is the maximum length of each
+string."
+  (let* ((len (length str))
+         (chunks (/ len max-len)))
+    (loop for i to chunks collect
+         (subseq str (* i max-len) (and (< (* (+ i 1) max-len) len)
+                                        (* (+ i 1) max-len))))))
+
 (defun send-package (message client-group)
   "Simply sends a message recived from a client to all clients sharing a
 buffer."
-
-  ;; -- DEBUG -- ;;
-  (print message)
-  (force-output)
-  ;; ----------- ;;
-
   (loop for client in client-group do
-       (write-string message (client-stream client))
-       (finish-output (client-stream client))))
+     ;; -- DEBUG -- ;;
+       (print message)
+       (force-output)
+     ;; ----------- ;;
+       (mapc (lambda (str)
+               (write-string str (client-stream client))
+               (finish-output (client-stream client)))
+             (string-chunks (expt 2 11) message))))
 
 (defun remove-from-group (client)
   "Fetches the client-group the given client is a part of, and returns it's
@@ -56,7 +65,7 @@ will be called. Every time it receives a package it will make a few changes
         (remove-from-group client)))
   ;; After reaching EOF we remove the client from the client group. If that
   ;; was the last connected client the key should no longer be associated
-  ;; with a key. 
+  ;; with a key.
   (unless (setf (client-group-clients
                  (gethash (client-key client) *client-groups*))
                 (remove-from-group client))
