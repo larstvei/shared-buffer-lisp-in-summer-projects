@@ -134,4 +134,5 @@ session. We let the key be associated with a new client-group, which
                          :reuse-address t
                          :multi-threading t))
 
-(defvar *server* (shared-buffer-server "localhost"))
+;;(defvar *server* (shared-buffer-server "localhost"))
+

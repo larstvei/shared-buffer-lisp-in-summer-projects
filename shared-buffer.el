@@ -195,8 +195,6 @@ is updated within this time frame the timer must be reset."
     (delete-overlay (sb-client-region client)))
   (delete-overlay (sb-client-cursor client)))
 
-
-
 (defun sb-update-buffer (package buffer)
   "Makes changes to the shared buffer specified by the package."
   (setq inhibit-modification-hooks t)
@@ -257,7 +255,6 @@ messages are handled in this function."
   (setq sb-msg (concat sb-msg msg))
   (unless (or (= (length msg) (expt 2 11))
               (= (length msg) (expt 2 12)))
-    (message "sb-handle-recieved-string!")
     (let ((strings (split-string sb-msg "\\[cl")))
       (mapc (lambda (str) (sb-handle-recieved-string str process))
             strings)
