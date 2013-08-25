@@ -41,7 +41,6 @@ buffer."
      ;; -- DEBUG -- ;;
        (print message)
        (force-output)
-
      ;; ----------- ;;
        (mapc (lambda (str)
                (write-string str (client-stream client))
