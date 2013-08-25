@@ -70,8 +70,8 @@ shared-buffer client."
   (setq sb-server
         (make-network-process
          :name "sb-client" :buffer buffer
-         :filter 'sb-client-filter :family 'ipv4
-         :host host :service sb-port))
+         :filter 'sb-client-filter :sentinel 'sb-client-sentinel
+         :family 'ipv4 :host host :service sb-port))
   (add-hook 'after-change-functions 'sb-send-update nil 'local)
   (add-hook 'post-command-hook 'sb-send-cursor-update nil 'local)
   (equal 'open (process-status sb-server)))
@@ -251,11 +251,13 @@ messages are handled in this function."
 
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
-  (message "%d" (length msg))
   (setq sb-msg (concat sb-msg msg))
-  (unless (or (= (length msg) (expt 2 11))
-              (= (length msg) (expt 2 12)))
+  (unless (= (length msg) (expt 2 10))
     (let ((strings (split-string sb-msg "\\[cl")))
       (mapc (lambda (str) (sb-handle-recieved-string str process))
             strings)
-      (setq sb-msg ""))))
+      (setq sb-msg "")))
+  (process-send-string process "ack\n"))
+
+(defun sb-client-sentinel (process msg)
+  'ok)
