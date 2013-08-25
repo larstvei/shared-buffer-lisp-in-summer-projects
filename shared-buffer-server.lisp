@@ -9,6 +9,7 @@
 ;; GNU General Public License for more details.
 
 (ql:quickload :usocket)
+(ql:quickload :bt-semaphore)
 
 (defconstant +port+ 3705
   "Shared-buffer uses port 3705.")
@@ -19,7 +20,8 @@
 (defparameter *colors* (list "green" "blue" "red" "yellow" "purple" "orange")
   "A list of colors for cursors.")
 
-(defstruct client key stream id color)
+(defstruct client key stream id color 
+           (semaphore (bt-semaphore:make-semaphore :name "ack")))
 
 (defstruct client-group clients colors)
 
@@ -39,11 +41,19 @@ buffer."
      ;; -- DEBUG -- ;;
        (print message)
        (force-output)
+
      ;; ----------- ;;
        (mapc (lambda (str)
                (write-string str (client-stream client))
-               (finish-output (client-stream client)))
-             (string-chunks (expt 2 11) message))))
+               (finish-output (client-stream client))
+               (bt-semaphore:wait-on-semaphore
+                (client-semaphore client) :timeout 1)
+               ;; -- DEBUG -- ;;
+               (format t "chunk size: ~d~%" (length str))
+               (force-output)
+               ;; ----------- ;;
+               )
+             (string-chunks (expt 2 10) message))))
 
 (defun remove-from-group (client)
   "Fetches the client-group the given client is a part of, and returns it's
@@ -58,11 +68,13 @@ will be called. Every time it receives a package it will make a few changes
   buffer. "
   (loop for message = (read-line (client-stream client) nil)
      while message do
-       (send-package
-        (format nil "~a ~a \"~a\"]"
-                (subseq message 0 (- (length message) 9))
-                (client-id client) (client-color client))
-        (remove-from-group client)))
+       (if (string-equal "ack" message)
+           (bt-semaphore:signal-semaphore (client-semaphore client) 1)
+           (send-package
+            (format nil "~a ~a \"~a\"]"
+                    (subseq message 0 (- (length message) 9))
+                    (client-id client) (client-color client))
+            (remove-from-group client))))
   ;; After reaching EOF we remove the client from the client group. If that
   ;; was the last connected client the key should no longer be associated
   ;; with a key.
@@ -134,5 +146,4 @@ session. We let the key be associated with a new client-group, which
                          :reuse-address t
                          :multi-threading t))
 
-;;(defvar *server* (shared-buffer-server "localhost"))
-
+(defvar *server* (shared-buffer-server "localhost"))
