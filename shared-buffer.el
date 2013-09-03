@@ -23,6 +23,11 @@ same shared buffer. The cursor is just an overlay object, and the color is
   moved) be deleted after ten seconds."
   region cursor color timer)
 
+(defstruct sb-message
+  "Each message received is prefixed with a length. The message will not be
+evaluated before all bytes are received."
+  (bytes-left 0) (message ""))
+
 (defcustom sb-port 3705
   "Shared-buffer uses port 3705 by default."
   :group 'shared-buffer
@@ -30,7 +35,7 @@ same shared buffer. The cursor is just an overlay object, and the color is
 
 (defvar sb-key ""
   "A buffer-local string containing the key to the associated
-  shared-bufer-session.")
+  shared-buffer-session.")
 
 (defvar sb-server nil
   "A buffer-local variable pointing to the server a shared buffer is
@@ -41,15 +46,15 @@ same shared buffer. The cursor is just an overlay object, and the color is
   shared-buffer.")
 
 (defvar sb-dont-send nil
-  "Indecates that the next package should not be sent, if set to a non-nil
+  "Indicates that the next package should not be sent, if set to a non-nil
   value.")
 
 (defvar sb-point 1
   "A variable containing the current cursor position.")
 
-(defvar sb-msg ""
+(defvar sb-msg (make-sb-message)
   "A message from the server is temporarily stored in sb-msg. A message
-  larger than 4KB will be read in 4KB bulks.")
+  larger than 1KB will be read in 1KB bulks.")
 
 (defvar sb-new-client t
   "When a client has just connected it has to receive the shared buffer's
@@ -65,7 +70,6 @@ shared-buffer client."
   (make-local-variable 'sb-dont-send)
   (make-local-variable 'sb-new-client)
   (make-local-variable 'sb-point)
-  (setq process-connection-type nil)
   (setq sb-key (read-from-minibuffer "key: "))
   (setq sb-server
         (make-network-process
@@ -74,6 +78,8 @@ shared-buffer client."
          :family 'ipv4 :host host :service sb-port))
   (add-hook 'after-change-functions 'sb-send-update nil 'local)
   (add-hook 'post-command-hook 'sb-send-cursor-update nil 'local)
+  (put 'sb-send-update 'permanent-local-hook t)
+  (put 'sb-send-cursor-update 'permanent-local-hook t)
   (equal 'open (process-status sb-server)))
 
 (defun sb-connect-to-shared-buffer (host &optional buffer)
@@ -226,38 +232,70 @@ is updated within this time frame the timer must be reset."
       (setq inhibit-modification-hooks nil)
       (set-buffer old-curr-buf))))
 
-(defun message-from-server (process msg)
+(defun sb-message-from-server (process msg)
   "The sever does not send messages with the sb-package format. These
 messages are handled in this function."
   (save-excursion
     (let ((old-buffer (current-buffer)))
-      (set-buffer (process-buffer process))
+      (when (buffer-live-p (process-buffer process))
+        (set-buffer (process-buffer process)))
       (cond ((not (stringp msg)) (prin1 msg))
             ((string-match "The key " msg)
              (sb-close) (kill-buffer)
              (message msg))
-            ((string= msg "send-everything")
+            ((string-match "send-everything" msg)
              (sb-send-package 1 0 (buffer-substring-no-properties
                                    (point-min) (point-max)) t))
             (t (prin1 msg)))
       (when (buffer-live-p old-buffer) (set-buffer old-buffer)))))
 
-(defun sb-handle-recieved-string (string process)
+(defun sb-handle-received-string (process string)
+  "Handles an incoming string. Empty strings are ignored, structs
+are read and processed. Other messages are probably a message from the
+  server and is treated in sb-message-from-server."
   (cond ((string= string "") 'ignore)
-        ((string-match "-struct-sb-package" string)
-         (let ((package (read (concat "[cl" string))))
+        ((string-match "\\[cl-struct-sb-package" string)
+         (let ((package (read string)))
            (sb-update-buffer package (process-buffer process))))
-        (t (message-from-server process string))))
+        (t (sb-message-from-server process string))))
+
+(defun sb-receive-new-message (message)
+  "In this function we assume that there is a new message to read. All
+messages are prefixed with the length of the message (or the number of
+  bytes). The message is stored in the sb-message struct, and the part of
+  the string that has still not been stored is returned."
+  (let ((msg-start (string-match "[^[:digit:] ]" message)))
+    (setf (sb-message-bytes-left sb-msg) (read message))
+    (let* ((message-len (length message))
+           (msg-part-len (+ msg-start (sb-message-bytes-left sb-msg)))
+           (msg-end (if (< msg-part-len message-len)
+                        msg-part-len message-len)))
+      (setf (sb-message-message sb-msg)
+            (substring message msg-start msg-end)
+            (sb-message-bytes-left sb-msg)
+            (- (sb-message-bytes-left sb-msg) (- msg-end msg-start)))
+      (substring message msg-end))))
+ 
+(defun sb-receive-message-part (message)
+  "Here we assume that a message has already been partially received."
+  (let* ((msg-end (and (< (sb-message-bytes-left sb-msg) (length message))
+                       (sb-message-bytes-left sb-msg)))
+         (msg-part (substring message 0 msg-end)))
+    (setf (sb-message-message sb-msg)
+          (concat (sb-message-message sb-msg) msg-part)
+          (sb-message-bytes-left sb-msg)
+          (- (sb-message-bytes-left sb-msg) (length msg-part)))
+    (if msg-end (substring message msg-end) "")))
 
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
-  (setq sb-msg (concat sb-msg msg))
-  (unless (= (length msg) (expt 2 10))
-    (let ((strings (split-string sb-msg "\\[cl")))
-      (mapc (lambda (str) (sb-handle-recieved-string str process))
-            strings)
-      (setq sb-msg "")))
-  (process-send-string process "ack\n"))
+  (setq msg (if (zerop (sb-message-bytes-left sb-msg))
+                (sb-receive-new-message msg)
+              (sb-receive-message-part msg)))
+  (when (zerop (sb-message-bytes-left sb-msg))
+    (sb-handle-received-string process (sb-message-message sb-msg))
+    (when (string-match "[^ ]" msg)
+      (sb-client-filter process msg))))
 
 (defun sb-client-sentinel (process msg)
   'ok)
