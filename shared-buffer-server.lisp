@@ -9,7 +9,6 @@
 ;; GNU General Public License for more details.
 
 (ql:quickload :usocket)
-(ql:quickload :bt-semaphore)
 
 (defconstant +port+ 3705
   "Shared-buffer uses port 3705.")
@@ -20,8 +19,7 @@
 (defparameter *colors* (list "green" "blue" "red" "yellow" "purple" "orange")
   "A list of colors for cursors.")
 
-(defstruct client key stream id color 
-           (semaphore (bt-semaphore:make-semaphore :name "ack")))
+(defstruct client key stream id color)
 
 (defstruct client-group clients colors)
 
@@ -29,30 +27,33 @@
   "Returns a list of strings, where max-len is the maximum length of each
 string."
   (let* ((len (length str))
-         (chunks (/ len max-len)))
-    (loop for i to chunks collect
-         (subseq str (* i max-len) (and (< (* (+ i 1) max-len) len)
-                                        (* (+ i 1) max-len))))))
+         (chunks (floor (/ len max-len))))
+    (values
+     (loop for i to chunks collect
+          (subseq str (* i max-len) (and (< (* (+ i 1) max-len) len)
+                                         (* (+ i 1) max-len)))) (+ chunks 1))))
 
 (defun send-package (message client-group)
   "Simply sends a message recived from a client to all clients sharing a
 buffer."
+  (setf message (format nil "~d ~a " (length message) message))
   (loop for client in client-group do
      ;; -- DEBUG -- ;;
        (print message)
        (force-output)
      ;; ----------- ;;
-       (mapc (lambda (str)
-               (write-string str (client-stream client))
-               (finish-output (client-stream client))
-               (bt-semaphore:wait-on-semaphore
-                (client-semaphore client) :timeout 1)
-               ;; -- DEBUG -- ;;
-               (format t "chunk size: ~d~%" (length str))
-               (force-output)
-               ;; ----------- ;;
-               )
-             (string-chunks (expt 2 10) message))))
+       (multiple-value-bind (strings chunks)
+           (string-chunks (expt 2 10) message)
+         (mapc (lambda (str)
+                 (write-string str (client-stream client))
+                 (finish-output (client-stream client))
+                 (unless (zerop (decf chunks))
+                   (sleep 0.05))
+                 ;; -- DEBUG -- ;;
+                 (format t "chunk size: ~d~%cunks left: ~d~%" (length str) chunks)
+                 (force-output)
+                 ;; ----------- ;;
+                 ) strings))))
 
 (defun remove-from-group (client)
   "Fetches the client-group the given client is a part of, and returns it's
@@ -67,13 +68,11 @@ will be called. Every time it receives a package it will make a few changes
   buffer. "
   (loop for message = (read-line (client-stream client) nil)
      while message do
-       (if (string-equal "ack" message)
-           (bt-semaphore:signal-semaphore (client-semaphore client) 1)
-           (send-package
-            (format nil "~a ~a \"~a\"]"
-                    (subseq message 0 (- (length message) 9))
-                    (client-id client) (client-color client))
-            (remove-from-group client))))
+       (send-package
+        (format nil "~a ~a \"~a\"]"
+                (subseq message 0 (- (length message) 9))
+                (client-id client) (client-color client))
+        (remove-from-group client)))
   ;; After reaching EOF we remove the client from the client group. If that
   ;; was the last connected client the key should no longer be associated
   ;; with a key.
