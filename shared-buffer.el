@@ -88,7 +88,9 @@ shared-buffer-session."
   (interactive "sHost: ")
   (if (sb-connect-to-server
        host (or buffer (generate-new-buffer "*shared-buffer*")))
-      (process-send-string sb-server (concat "existing\n" sb-key "\n"))
+      (process-send-string 
+       sb-server (encode-coding-string
+                  (concat "existing\n" sb-key "\n") 'ASCII))
     (message "Could not connect.")
     (sb-close)
     (kill-buffer)))
@@ -98,7 +100,8 @@ shared-buffer-session."
   (interactive "sHost: ")
   (if (sb-connect-to-server
        host (or buffer (current-buffer)))
-      (process-send-string sb-server (concat "new\n" sb-key "\n"))
+      (process-send-string
+       sb-server (encode-coding-string (concat "new\n" sb-key "\n") 'utf-8))
     (message "Could not connect."))
   (setq sb-new-client nil))
 
@@ -121,14 +124,15 @@ to the 'after-change-functions hook for shared buffers."
   "Sends a package to the server."
   (process-send-string
    sb-server
-   (concat
-    (prin1-to-string
-     (make-sb-package
-      :start start :bytes bytes
-      :text (split-string string "\\(\r\n\\|[\n\r]\\)")
-      :for-new-client for-new-client
-      :region-start (when (region-active-p) (region-beginning))
-      :region-end (when (region-active-p) (region-end)))) "\n")))
+   (encode-coding-string
+    (concat
+     (prin1-to-string
+      (make-sb-package
+       :start start :bytes bytes
+       :text (split-string string "\\(\r\n\\|[\n\r]\\)")
+       :for-new-client for-new-client
+       :region-start (when (region-active-p) (region-beginning))
+       :region-end (when (region-active-p) (region-end)))) "\n") 'utf-8)))
 
 (defun sb-string-chunks (max-len str)
   "Returns a list of strings, where max-len is the maximum length of each
@@ -289,6 +293,7 @@ messages are prefixed with the length of the message (or the number of
 
 (defun sb-client-filter (process msg)
   "The filter function handles all messages from the server."
+  (setq msg (decode-coding-string msg 'utf-8))
   (setq msg (if (zerop (sb-message-bytes-left sb-msg))
                 (sb-receive-new-message msg)
               (sb-receive-message-part msg)))

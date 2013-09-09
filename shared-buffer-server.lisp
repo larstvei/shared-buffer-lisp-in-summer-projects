@@ -9,6 +9,7 @@
 ;; GNU General Public License for more details.
 
 (ql:quickload :usocket)
+(ql:quickload :flexi-streams)
 
 (defconstant +port+ 3705
   "Shared-buffer uses port 3705.")
@@ -48,9 +49,10 @@ buffer."
                  (write-string str (client-stream client))
                  (finish-output (client-stream client))
                  (unless (zerop (decf chunks))
-                   (sleep 0.05))
+                   (sleep 0.005))
+
                  ;; -- DEBUG -- ;;
-                 (format t "chunk size: ~d~%cunks left: ~d~%" (length str) chunks)
+                 (format t "chunk size: ~d~%chunks left: ~d~%" (length str) chunks)
                  (force-output)
                  ;; ----------- ;;
                  ) strings))))
@@ -118,8 +120,10 @@ session. We let the key be associated with a new client-group, which
   "When a connection to a client is established this function is run. It
   will read from the stream as long as the connection is open, and redirect
   messages to all clients that has provided the same key."
-  (let* ((kind (read-line stream))
-         (key (read-line stream)))
+  (let* ((stream (flexi-streams:make-flexi-stream
+                  stream :external-format :utf-8))
+         (kind (read-line stream nil))
+         (key (read-line stream nil)))
     (cond ((string= kind "new")
            (if (gethash key *client-groups*)
                (send-package "Choose a different key."
@@ -141,7 +145,8 @@ session. We let the key be associated with a new client-group, which
   (usocket:socket-server host +port+
                          #'handler nil
                          :in-new-thread t
+                         :element-type '(unsigned-byte 8)
                          :reuse-address t
                          :multi-threading t))
 
-(defvar *server* (shared-buffer-server "localhost"))
+(defvar *server* (shared-buffer-server "0.0.0.0"))
