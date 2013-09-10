@@ -90,7 +90,7 @@ shared-buffer-session."
        host (or buffer (generate-new-buffer "*shared-buffer*")))
       (process-send-string 
        sb-server (encode-coding-string
-                  (concat "existing\n" sb-key "\n") 'ASCII))
+                  (concat "existing\n" sb-key "\n") 'utf-8))
     (message "Could not connect.")
     (sb-close)
     (kill-buffer)))
