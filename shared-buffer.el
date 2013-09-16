@@ -13,8 +13,8 @@
 (defstruct sb-package
   "This struct defines the format for packages sent to and
   received from the server."
-  (start 1) (bytes 0) text for-new-client (cursor sb-point)
-  region-start region-end id color)
+  (start 1) (bytes 0) (max sb-point-max) text for-new-client
+  (cursor sb-point) region-start region-end id color)
 
 (defstruct sb-client
   "This struct contains information about the other clients connected to the
@@ -49,6 +49,10 @@ evaluated before all bytes are received."
   "Indicates that the next package should not be sent, if set to a non-nil
   value.")
 
+(defvar sb-point-max 1
+  "A variable containing what (point-max) returned before a change was
+  made.")
+
 (defvar sb-point 1
   "A variable containing the current cursor position.")
 
@@ -69,6 +73,7 @@ shared-buffer client."
   (make-local-variable 'sb-clients)
   (make-local-variable 'sb-dont-send)
   (make-local-variable 'sb-new-client)
+  (make-local-variable 'sb-point-max)
   (make-local-variable 'sb-point)
   (setq sb-key (read-from-minibuffer "key: "))
   (setq sb-server
@@ -78,8 +83,10 @@ shared-buffer client."
          :family 'ipv4 :host host :service sb-port))
   (add-hook 'after-change-functions 'sb-send-update nil 'local)
   (add-hook 'post-command-hook 'sb-send-cursor-update nil 'local)
+  (add-hook 'before-change-functions 'sb-update-point-max nil 'local)
   (put 'sb-send-update 'permanent-local-hook t)
   (put 'sb-send-cursor-update 'permanent-local-hook t)
+  (put 'sb-update-point-max 'permanent-local-hook t)
   (equal 'open (process-status sb-server)))
 
 (defun sb-connect-to-shared-buffer (host &optional buffer)
@@ -88,7 +95,7 @@ shared-buffer-session."
   (interactive "sHost: ")
   (if (sb-connect-to-server
        host (or buffer (generate-new-buffer "*shared-buffer*")))
-      (process-send-string 
+      (process-send-string
        sb-server (encode-coding-string
                   (concat "existing\n" sb-key "\n") 'utf-8))
     (message "Could not connect.")
@@ -111,6 +118,9 @@ package to the server containing cursor location."
   (unless sb-dont-send
     (sb-send-update 1 1 0))
   (setq sb-dont-send nil))
+
+(defun sb-update-point-max (start end)
+  (setq sb-point-max (point-max)))
 
 (defun sb-send-update (start end bytes)
   "Sends an update to the server. This function is locally added
@@ -205,6 +215,11 @@ is updated within this time frame the timer must be reset."
     (delete-overlay (sb-client-region client)))
   (delete-overlay (sb-client-cursor client)))
 
+(defun sb-calculate-point (point max)
+  "Given an absolute point from a shared buffer, we calculate where that
+  point should be places in this buffer."
+  (if (< (point) point) (+ point (- (point-max) max)) point))
+
 (defun sb-update-buffer (package buffer)
   "Makes changes to the shared buffer specified by the package."
   (setq inhibit-modification-hooks t)
@@ -224,7 +239,9 @@ is updated within this time frame the timer must be reset."
       (setq auto-fill-function nil)
       (unless (and (not sb-new-client)
                    (sb-package-for-new-client package))
-        (goto-char (sb-package-start package))
+        (goto-char
+         (sb-calculate-point
+          (sb-package-start package) (sb-package-max package)))
         (delete-char (sb-package-bytes package))
         (sb-insert (sb-package-text package))
         (sb-move-cursor client (sb-package-cursor package))
@@ -279,7 +296,7 @@ messages are prefixed with the length of the message (or the number of
             (sb-message-bytes-left sb-msg)
             (- (sb-message-bytes-left sb-msg) (- msg-end msg-start)))
       (substring message msg-end))))
- 
+
 (defun sb-receive-message-part (message)
   "Here we assume that a message has already been partially received."
   (let* ((msg-end (and (< (sb-message-bytes-left sb-msg) (length message))
