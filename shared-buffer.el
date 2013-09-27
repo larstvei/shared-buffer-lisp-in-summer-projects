@@ -99,7 +99,7 @@ shared-buffer-session."
        sb-server (encode-coding-string
                   (concat "existing\n" sb-key "\n") 'utf-8))
     (message "Could not connect.")
-    (sb-close)
+    (sb-disconnect)
     (kill-buffer)))
 
 (defun sb-share-this-buffer (host &optional buffer)
@@ -152,7 +152,7 @@ string."
     (cons (substring str 0 max-len)
           (sb-string-chunks max-len (substring str max-len)))))
 
-(defun sb-close ()
+(defun sb-disconnect ()
   "Closes the connecton to the server."
   (interactive)
   (remove-hook 'post-command-hook 'sb-send-cursor-update 'local)
@@ -262,7 +262,7 @@ messages are handled in this function."
         (set-buffer (process-buffer process)))
       (cond ((not (stringp msg)) (prin1 msg))
             ((string-match "The key " msg)
-             (sb-close) (kill-buffer)
+             (sb-disconnect) (kill-buffer)
              (message msg))
             ((string-match "send-everything" msg)
              (sb-send-package 1 0 (buffer-substring-no-properties
