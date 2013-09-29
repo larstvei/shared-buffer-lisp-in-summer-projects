@@ -39,7 +39,7 @@
 
 (defun string-chunks (max-len str)
   "Returns a list of strings, where max-len is the maximum length of each
-string."
+string. It also returns the length of the list (the number of chunks)."
   (let* ((len (length str))
          (chunks (floor (/ len max-len))))
     (values
@@ -52,23 +52,13 @@ string."
 buffer."
   (setf message (format nil "~d ~a " (length message) message))
   (loop for client in client-group do
-     ;; -- DEBUG -- ;;
-       (print message)
-       (force-output)
-     ;; ----------- ;;
        (multiple-value-bind (strings chunks)
            (string-chunks (expt 2 10) message)
          (mapc (lambda (str)
                  (write-string str (client-stream client))
                  (finish-output (client-stream client))
                  (unless (zerop (decf chunks))
-                   (sleep 0.005))
-
-                 ;; -- DEBUG -- ;;
-                 (format t "chunk size: ~d~%chunks left: ~d~%" (length str) chunks)
-                 (force-output)
-                 ;; ----------- ;;
-                 ) strings))))
+                   (sleep 0.005))) strings))))
 
 (defun remove-from-group (client)
   "Fetches the client-group the given client is a part of, and returns it's
