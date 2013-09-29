@@ -1,14 +1,26 @@
-;; This program is free software; you can redistribute it and/or modify it
-;; under the terms of the GNU General Public License as published by the
-;; Free Software Foundation, either version 3 of the License, or (at your
-;; option) any later version.
+;;; shared-buffer.el --- Collaberative editing in Emacs.
 
-;; This program is distributed in the hope that it will be useful, but
-;; WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANT
-;; ABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public
-;; License for more details.
+;; Copyright (C) 2013 Lars Tveito.
 
-(eval-when-compile (require 'cl-lib))
+;; Author: Lars Tveito <larstvei@ifi.uio.no>
+
+;; Contains code from GNU Emacs <https://www.gnu.org/software/emacs/>,
+;; released under the GNU General Public License version 3 or later.
+
+;; Shared buffer is free software; you can redistribute it and/or modify it
+;; under the terms of the GNU General Public License as published by
+;; the Free Software Foundation; either version 3, or (at your option)
+;; any later version.
+;;
+;; Shared buffer is distributed in the hope that it will be useful, but
+;; WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General
+;; Public License for more details.
+;;
+;; You should have received a copy of the GNU General Public License
+;; along with Shared buffer.  If not, see <http://www.gnu.org/licenses/>.
+
+;;; Code:
 
 (defstruct sb-package
   "This struct defines the format for packages sent to and
@@ -321,3 +333,5 @@ messages are prefixed with the length of the message (or the number of
 
 (defun sb-client-sentinel (process msg)
   'ok)
+
+;;; shared-buffer.el ends here.

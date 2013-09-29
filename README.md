@@ -4,7 +4,7 @@ Shared buffer is an Emacs extension that enables online collaborative
 editing for Emacs.
 
 It is still at an experimental stage. I encourage you test it out, but make
-sure to back up files in case it breaks. There are still quite a fiew bugs.
+sure to back up files in case it breaks. There are still quite a few bugs.
 
 There is a server running on `virvel.de` that you may use. You
 can also set up a server yourself. This is especially useful if you want to
@@ -13,7 +13,7 @@ share a buffer with someone who is on the same local network.
 ##Quick-start
 
 To install the Emacs extension just download the `shared-buffer.el` and
-store it in your `load-path`.
+store it in your `load-path`. It is dependent on 
 
     git clone https://github.com/larstvei/shared-buffer.git
 

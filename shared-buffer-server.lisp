@@ -1,3 +1,12 @@
+;;; shared-buffer-server.lisp --- Shared buffer server.
+
+;; Copyright (C) 2013 Lars Tveito.
+
+;; Author: Lars Tveito <larstvei@ifi.uio.no>
+
+;; Contains code from GNU Emacs <https://www.gnu.org/software/emacs/>,
+;; released under the GNU General Public License version 3 or later.
+
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation, either version 3 of the License, or
@@ -11,6 +20,8 @@
 (ql:quickload :usocket)
 (ql:quickload :flexi-streams)
 
+;; Constants and variables:
+
 (defconstant +port+ 3705
   "Shared-buffer uses port 3705.")
 
@@ -23,6 +34,8 @@
 (defstruct client key stream id color)
 
 (defstruct client-group clients colors)
+
+;; Functions:
 
 (defun string-chunks (max-len str)
   "Returns a list of strings, where max-len is the maximum length of each
@@ -150,3 +163,5 @@ session. We let the key be associated with a new client-group, which
                          :multi-threading t))
 
 (defvar *server* (shared-buffer-server "0.0.0.0"))
+
+;;; shared-buffer-server.lisp ends here.
