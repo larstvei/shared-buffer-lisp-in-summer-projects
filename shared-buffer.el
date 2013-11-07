@@ -21,6 +21,7 @@
 ;; along with Shared buffer.  If not, see <http://www.gnu.org/licenses/>.
 
 ;;; Code:
+(require 'cl)
 
 (defstruct sb-package
   "This struct defines the format for packages sent to and
