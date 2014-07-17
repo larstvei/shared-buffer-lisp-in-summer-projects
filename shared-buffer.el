@@ -335,4 +335,6 @@ messages are prefixed with the length of the message (or the number of
 (defun sb-client-sentinel (process msg)
   'ok)
 
+(provide 'shared-buffer)
+
 ;;; shared-buffer.el ends here.
