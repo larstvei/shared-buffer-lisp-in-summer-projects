@@ -22,7 +22,8 @@
 
 (defpackage #:shared-buffer-server
             (:use :usocket
-                  :flexi-streams))
+                  :flexi-streams)
+            (:export :create-server))
 
 (in-package #:shared-buffer-server)
 
