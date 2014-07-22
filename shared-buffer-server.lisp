@@ -17,8 +17,14 @@
 ;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 ;; GNU General Public License for more details.
 
-(ql:quickload :usocket)
-(ql:quickload :flexi-streams)
+#-usocket (ql:quickload :usocket)
+#-flexi-streames (ql:quickload :flexi-streams)
+
+(defpackage #:shared-buffer-server
+            (:use :usocket
+                  :flexi-streams))
+
+(in-package #:shared-buffer-server)
 
 ;; Constants and variables:
 
@@ -152,6 +158,9 @@ session. We let the key be associated with a new client-group, which
                          :reuse-address t
                          :multi-threading t))
 
-(defvar *server* (shared-buffer-server "0.0.0.0"))
+;;(defvar *server* (shared-buffer-server "0.0.0.0"))
+
+(defmacro create-server (name host)
+          `(defvar ,(intern (string-upcase name)) ,host))
 
 ;;; shared-buffer-server.lisp ends here.
